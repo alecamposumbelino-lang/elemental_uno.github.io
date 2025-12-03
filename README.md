@@ -1,2 +1,2 @@
-# elemental_uno.github.io
+# elemental.github.io
 Jogo elemental ao estilo Uno 
