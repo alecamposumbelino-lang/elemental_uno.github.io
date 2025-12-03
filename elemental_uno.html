@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elemental UNO (Versão Console/Navegador)</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #282c34;
+            color: #ffffff;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        h1, h2 {
+            color: #61dafb;
+        }
+        #game-output {
+            background-color: #1c1f24;
+            border: 1px solid #3a3f4a;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 8px;
+            max-height: 400px;
+            overflow-y: scroll;
+        }
+        .card-display {
+            display: inline-block;
+            background-color: #4a4f5a;
+            border-radius: 5px;
+            padding: 5px 10px;
+            margin: 3px;
+            font-weight: bold;
+            color: black;
+            border: 1px solid #bbb;
+        }
+        .element-Terra { background-color: #8B4513; color: white; }
+        .element-Fogo { background-color: #FF0000; color: white; }
+        .element-Água { background-color: #1E90FF; color: white; }
+        .element-Vento { background-color: #FFD700; color: black; }
+        .element-Ferro { background-color: #696969; color: white; }
+        .current-player {
+            background-color: #4CAF50;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .player-info {
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #61dafb;
+            color: #282c34;
+            border: none;
+            padding: 10px 15px;
+            margin-top: 10px;
+            cursor: pointer;
+            border-radius: 5px;
+            font-size: 1em;
+        }
+        button:hover {
+            background-color: #21a1f1;
+        }
+    </style>
+</head>
+<body>
+    <h1>Elemental UNO (Versão Console/Navegador)</h1>
+    <p>Este é um esqueleto funcional do Elemental UNO. Abra o **console do navegador (F12)** para interagir com o jogo.</p>
+    <button onclick="iniciarJogo()">Iniciar Novo Jogo</button>
+    
+    <div id="game-info">
+        <h2>Estado Atual do Jogo</h2>
+        <div id="player-status"></div>
+        <div id="deck-info"></div>
+        <div id="discard-pile"></div>
+        <div id="human-player-hand"></div>
+    </div>
+
+    <script>
+        // --- CONSTANTES DO JOGO ---
+        const ELEMENTOS = ["Terra", "Fogo", "Água", "Vento", "Ferro"];
+        const CARTAS_NUMERICAS_DIST = [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9]; // 19 cartas
+        const CARTAS_ESPECIAIS_TIPOS = ["+2", "+3", "+4", "Pular", "TrocarElemento", "JogarDeNovo"]; // 6 tipos
+
+        // --- ESTADO GLOBAL DO JOGO ---
+        let estadoDoJogo = {
+            numJogadores: 4,
+            vencedor: null,
+            turno: 0,
+            direcao: 1, // 1: horário, -1: anti-horário
+            elementoAtual: "", // O elemento que deve ser jogado (definido pelo topo ou TrocarElemento)
+            baralho: [],
+            pilhaDescarte: [],
+            acumuladorCompra: 0, // Cartas acumuladas para comprar
+            jogadorPenalizado: -1, // Jogador que deve comprar acumuladorCompra
+
+            // Jogadores: { id, tipo("Humano"/"IA"), nome, nivel("Facil"/"Medio"/"Dificil") }
+            jogadores: [
+                { id: 0, tipo: "Humano", nome: "Você" },
+                { id: 1, tipo: "IA", nome: "IA-1", nivel: "Facil" },
+                { id: 2, tipo: "IA", nome: "IA-2", nivel: "Facil" },
+                { id: 3, tipo: "IA", nome: "IA-3", nivel: "Facil" }
+            ],
+            maos: [] // Array de arrays, uma para cada jogador
+        };
+
+        // --- FUNÇÕES AUXILIARES ---
+
+        // Helper para formatar uma carta para exibição
+        function formatCard(card) {
+            if (!card) return "N/A";
+            const elementClass = `element-${card.elemento}`;
+            return `<span class="card-display ${elementClass}">${card.elemento} ${card.tipo === "Numero" ? card.valor : card.valor.replace(/([A-Z])/g, ' $1').trim()}</span>`;
+        }
+
+        // Atualiza a exibição do HTML
+        function updateUI() {
+            const playerStatusDiv = document.getElementById('player-status');
+            playerStatusDiv.innerHTML = '<h3>Jogadores</h3>';
+            estadoDoJogo.jogadores.forEach((player, index) => {
+                const isCurrentPlayer = index === estadoDoJogo.turno;
+                playerStatusDiv.innerHTML += `
+                    <div class="player-info ${isCurrentPlayer ? 'current-player' : ''}">
+                        ${player.nome} (${player.tipo}${player.tipo === 'IA' ? ` - ${player.nivel}` : ''}): ${estadoDoJogo.maos[index].length} cartas
+                    </div>
+                `;
+            });
+
+            document.getElementById('deck-info').innerHTML = `<h3>Baralho</h3>Cartas restantes: ${estadoDoJogo.baralho.length}`;
+            
+            const topoDescarte = estadoDoJogo.pilhaDescarte[estadoDoJogo.pilhaDescarte.length - 1];
+            document.getElementById('discard-pile').innerHTML = `<h3>Pilha de Descarte (Topo)</h3>${formatCard(topoDescarte)} (Elemento ativo: ${estadoDoJogo.elementoAtual}) <br/> ${estadoDoJogo.acumuladorCompra > 0 ? `Penalidade de Compra: ${estadoDoJogo.acumuladorCompra} cartas para o próximo.` : ''}`;
+
+            const humanHandDiv = document.getElementById('human-player-hand');
+            const humanPlayerId = estadoDoJogo.jogadores.findIndex(p => p.tipo === "Humano");
+            if (humanPlayerId !== -1) {
+                humanHandDiv.innerHTML = `<h3>Sua Mão (${estadoDoJogo.maos[humanPlayerId].length} cartas)</h3>`;
+                estadoDoJogo.maos[humanPlayerId].forEach((card, index) => {
+                    const isValid = validarJogada(card, topoDescarte, estadoDoJogo.elementoAtual);
+                    humanHandDiv.innerHTML += `
+                        <span class="card-display ${isValid ? 'valid-play' : ''} element-${card.elemento}" 
+                              style="cursor: ${isValid ? 'pointer' : 'not-allowed'}; border: ${isValid ? '2px solid #4CAF50' : '1px solid #bbb'};"
+                              onclick="if(${isValid}) jogarCartaHumano(${index});">
+                            ${index}. ${card.elemento} ${card.tipo === "Numero" ? card.valor : card.valor.replace(/([A-Z])/g, ' $1').trim()}
+                        </span>
+                    `;
+                });
+                humanHandDiv.innerHTML += `<br/><button onclick="comprarCartaHumano()" ${estadoDoJogo.turno !== humanPlayerId ? 'disabled' : ''}>Comprar Carta</button>`;
+            }
+        }
+
+
+        // --- LÓGICA DO JOGO ---
+
+        function montarBaralho() {
+            let baralho = [];
+            ELEMENTOS.forEach(elemento => {
+                CARTAS_NUMERICAS_DIST.forEach(valor => baralho.push({ elemento, tipo: "Numero", valor }));
+                CARTAS_ESPECIAIS_TIPOS.forEach(tipoEspecial => baralho.push({ elemento, tipo: "Especial", valor: tipoEspecial }));
+            });
+
+            // Embaralhar (Fisher-Yates)
+            for (let i = baralho.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [baralho[i], baralho[j]] = [baralho[j], baralho[i]];
+            }
+            return baralho;
+        }
+
+        function comprarCarta(jogadorId) {
+            if (estadoDoJogo.baralho.length === 0) {
+                console.warn("Baralho vazio! Reembaralhando descarte.");
+                const ultimaCarta = estadoDoJogo.pilhaDescarte.pop(); // Mantém a última carta
+                estadoDoJogo.baralho = montarBaralho(); // Cria um novo baralho com descarte
+                estadoDoJogo.pilhaDescarte = [ultimaCarta]; // Restaura a última carta
+                // Poderia ser mais sofisticado: reembaralhar o descarte exceto a última.
+                if (estadoDoJogo.baralho.length === 0) {
+                    console.error("Não há mais cartas para comprar! Fim de jogo inesperado.");
+                    estadoDoJogo.vencedor = "Ninguém (Baralho Esgotado)";
+                    return null;
+                }
+            }
+            const cartaComprada = estadoDoJogo.baralho.pop();
+            estadoDoJogo.maos[jogadorId].push(cartaComprada);
+            return cartaComprada;
+        }
+
+        function validarJogada(cartaJogada, cartaTopo, elementoAtivo) {
+            const elementoDeReferencia = cartaTopo.valor === "TrocarElemento" && elementoAtivo ? elementoAtivo : cartaTopo.elemento;
+            
+            // 1. Combinação Elemento OU Valor
+            if (cartaJogada.elemento === elementoDeReferencia || cartaJogada.valor === cartaTopo.valor) {
+                return true;
+            }
+
+            // 2. Acúmulo de Cartas de Compra (+X sobre +X)
+            const isCartaCompra = ["+2", "+3", "+4"].includes(cartaJogada.valor);
+            const isTopoCompra = ["+2", "+3", "+4"].includes(cartaTopo.valor);
+            
+            if (isTopoCompra && isCartaCompra) {
+                return true; // Acúmulo permitido
+            }
+            return false;
+        }
+
+        function aplicarEfeito(carta, jogadorAtualId) {
+            const valor = carta.valor;
+            let proximoJogador = (jogadorAtualId + estadoDoJogo.direcao + estadoDoJogo.numJogadores) % estadoDoJogo.numJogadores;
+
+            console.log(`Efeito ativado: ${formatCard(carta)}`);
+
+            switch (valor) {
+                case "+2":
+                case "+3":
+                case "+4":
+                    estadoDoJogo.acumuladorCompra += parseInt(valor.substring(1));
+                    estadoDoJogo.jogadorPenalizado = proximoJogador;
+                    console.log(`Próximo jogador (${estadoDoJogo.jogadores[proximoJogador].nome}) deve comprar ${estadoDoJogo.acumuladorCompra} cartas.`);
+                    break;
+
+                case "Pular":
+                    estadoDoJogo.turno = (estadoDoJogo.turno + estadoDoJogo.direcao + estadoDoJogo.numJogadores) % estadoDoJogo.numJogadores; // Pula um jogador
+                    console.log(`O turno de ${estadoDoJogo.jogadores[proximoJogador].nome} foi pulado.`);
+                    break;
+
+                case "JogarDeNovo":
+                    estadoDoJogo.turno = jogadorAtualId; // Mantém o turno no mesmo jogador
+                    console.log(`${estadoDoJogo.jogadores[jogadorAtualId].nome} joga novamente!`);
+                    break;
+
+                case "TrocarElemento":
+                    // Lógica para escolher novo elemento
+                    if (estadoDoJogo.jogadores[jogadorAtualId].tipo === "Humano") {
+                        escolherElementoHumano(jogadorAtualId); // UI pop-up/prompt para humano
+                    } else {
+                        // IA escolhe o elemento com mais cartas na sua mão, ou aleatoriamente se não tiver preferência
+                        let counts = {};
+                        estadoDoJogo.maos[jogadorAtualId].forEach(c => counts[c.elemento] = (counts[c.elemento] || 0) + 1);
+                        let bestElement = ELEMENTOS[Math.floor(Math.random() * ELEMENTOS.length)]; // Fallback aleatório
+                        let maxCount = 0;
+                        for (const elem of ELEMENTOS) {
+                            if (counts[elem] > maxCount) {
+                                maxCount = counts[elem];
+                                bestElement = elem;
+                            }
+                        }
+                        estadoDoJogo.elementoAtual = bestElement;
+                        console.log(`${estadoDoJogo.jogadores[jogadorAtualId].nome} trocou o elemento para ${estadoDoJogo.elementoAtual}.`);
+                    }
+                    break;
+            }
+        }
+
+        function escolherElementoHumano(jogadorId) {
+            const escolha = prompt(`Você jogou 'TrocarElemento'. Escolha o novo elemento: ${ELEMENTOS.join(', ')}`);
+            if (ELEMENTOS.includes(escolha)) {
+                estadoDoJogo.elementoAtual = escolha;
+                console.log(`Você trocou o elemento para ${estadoDoJogo.elementoAtual}.`);
+            } else {
+                console.warn("Escolha inválida. Elemento permanecerá o mesmo ou um aleatório.");
+                estadoDoJogo.elementoAtual = ELEMENTOS[Math.floor(Math.random() * ELEMENTOS.length)];
+            }
+        }
+
+        // --- LÓGICA DE IA (Nível Fácil para esta demo) ---
+        function decidirJogadaIA(jogadorId) {
+            const maoIA = estadoDoJogo.maos[jogadorId];
+            const cartaTopo = estadoDoJogo.pilhaDescarte[estadoDoJogo.pilhaDescarte.length - 1];
+            
+            // Prioridade: Empilhar +X se penalizado
+            if (estadoDoJogo.acumuladorCompra > 0 && estadoDoJogo.jogadorPenalizado === jogadorId) {
+                const cartaParaEmpilhar = maoIA.find(carta => ["+2", "+3", "+4"].includes(carta.valor) && validarJogada(carta, cartaTopo, estadoDoJogo.elementoAtual));
+                if (cartaParaEmpilhar) {
+                    return cartaParaEmpilhar;
+                }
+            }
+
+            // Jogar a primeira carta válida
+            for (const carta of maoIA) {
+                if (validarJogada(carta, cartaTopo, estadoDoJogo.elementoAtual)) {
+                    return carta;
+                }
+            }
+            return null; // Nenhuma jogada válida
+        }
+
+        // --- LOOP PRINCIPAL DO JOGO ---
+        async function executarTurno() {
+            if (estadoDoJogo.vencedor !== null) {
+                console.log(`Fim de Jogo! Vencedor: ${estadoDoJogo.vencedor}`);
+                return;
+            }
+
+            const jogadorAtualId = estadoDoJogo.turno;
+            const jogadorAtual = estadoDoJogo.jogadores[jogadorAtualId];
+            const maoAtual = estadoDoJogo.maos[jogadorAtualId];
+            const cartaTopo = estadoDoJogo.pilhaDescarte[estadoDoJogo.pilhaDescarte.length - 1];
+            
+            console.log(`\n--- Turno de ${jogadorAtual.nome} (ID: ${jogadorAtualId}) ---`);
+            console.log(`Mão atual: ${maoAtual.map((c, i) => `${i}. ${formatCard(c)}`).join(', ')}`);
+            console.log(`Carta no topo: ${formatCard(cartaTopo)} (Elemento ativo: ${estadoDoJogo.elementoAtual})`);
+            
+            updateUI(); // Atualiza a UI para o início do turno
+
+            // 1. VERIFICAÇÃO DE PENALIDADE DE COMPRA
+            if (estadoDoJogo.jogadorPenalizado === jogadorAtualId && estadoDoJogo.acumuladorCompra > 0) {
+                console.log(`${jogadorAtual.nome} deve comprar ${estadoDoJogo.acumuladorCompra} cartas e perde a vez.`);
+                for (let i = 0; i < estadoDoJogo.acumuladorCompra; i++) {
+                    comprarCarta(jogadorAtualId);
+                }
+                estadoDoJogo.acumuladorCompra = 0;
+                estadoDoJogo.jogadorPenalizado = -1;
+                
+                estadoDoJogo.turno = (estadoDoJogo.turno + estadoDoJogo.direcao + estadoDoJogo.numJogadores) % estadoDoJogo.numJogadores;
+                setTimeout(executarTurno, 1500); // Próximo turno após 1.5s
+                return;
+            }
+
+            // 2. FASE DE JOGADA
+            if (jogadorAtual.tipo === "Humano") {
+                // Humano interage via UI/Console
+                console.log("Sua vez. Escolha uma carta pelo índice ou clique no botão 'Comprar Carta'.");
+                // A execução de `executarTurno` será pausada até o jogador humano fazer sua jogada (via jogarCartaHumano ou comprarCartaHumano)
+                return; 
+            } else { // IA
+                const cartaParaJogar = decidirJogadaIA(jogadorAtualId);
+                if (cartaParaJogar) {
+                    const indexCarta = maoAtual.indexOf(cartaParaJogar);
+                    maoAtual.splice(indexCarta, 1);
+                    estadoDoJogo.pilhaDescarte.push(cartaParaJogar);
+                    estadoDoJogo.elementoAtual = cartaParaJogar.elemento; // Elemento padrão se não for TrocarElemento
+                    
+                    console.log(`${jogadorAtual.nome} jogou: ${formatCard(cartaParaJogar)}`);
+                    aplicarEfeito(cartaParaJogar, jogadorAtualId);
+
+                    if (maoAtual.length === 0) {
+                        estadoDoJogo.vencedor = jogadorAtual.nome;
+                        console.log(`!!! ${jogadorAtual.nome} venceu o jogo!`);
+                        updateUI();
+                        return;
+                    }
+                    if (maoAtual.length === 1) {
+                        console.log(`!!! ${jogadorAtual.nome} está com 1 carta! (Gritou Elemental!)`);
+                    }
+
+                } else {
+                    console.log(`${jogadorAtual.nome} não tem jogadas válidas, comprando carta.`);
+                    const cartaComprada = comprarCarta(jogadorAtualId);
+                    if (cartaComprada && validarJogada(cartaComprada, cartaTopo, estadoDoJogo.elementoAtual)) {
+                        const jogar = confirm(`${jogadorAtual.nome} comprou ${formatCard(cartaComprada)}. Jogar?`); // IA poderia ter lógica para isso
+                        if (jogar) {
+                             const indexCarta = maoAtual.indexOf(cartaComprada); // Encontra a carta recém-comprada
+                             maoAtual.splice(indexCarta, 1); // Remove da mão
+                             estadoDoJogo.pilhaDescarte.push(cartaComprada); // Adiciona ao descarte
+                             estadoDoJogo.elementoAtual = cartaComprada.elemento;
+                             console.log(`${jogadorAtual.nome} comprou e jogou: ${formatCard(cartaComprada)}`);
+                             aplicarEfeito(cartaComprada, jogadorAtualId);
+                             if (maoAtual.length === 0) {
+                                estadoDoJogo.vencedor = jogadorAtual.nome;
+                                console.log(`!!! ${jogadorAtual.nome} venceu o jogo!`);
+                                updateUI();
+                                return;
+                            }
+                            if (maoAtual.length === 1) {
+                                console.log(`!!! ${jogadorAtual.nome} está com 1 carta! (Gritou Elemental!)`);
+                            }
+                        } else {
+                            console.log(`${jogadorAtual.nome} comprou mas não jogou.`);
+                        }
+                    } else if (cartaComprada) {
+                         console.log(`${jogadorAtual.nome} comprou ${formatCard(cartaComprada)}.`);
+                    } else {
+                        console.log("Problema ao comprar carta.");
+                    }
+                }
+                estadoDoJogo.turno = (estadoDoJogo.turno + estadoDoJogo.direcao + estadoDoJogo.numJogadores) % estadoDoJogo.numJogadores;
+                setTimeout(executarTurno, 1500); // Delay para visualização
+            }
+        }
+
+        // --- AÇÕES DO JOGADOR HUMANO ---
+        function jogarCartaHumano(indexNaMao) {
+            const jogadorAtualId = estadoDoJogo.turno;
+            const maoHumano = estadoDoJogo.maos[jogadorAtualId];
+            const cartaParaJogar = maoHumano[indexNaMao];
+            const cartaTopo = estadoDoJogo.pilhaDescarte[estadoDoJogo.pilhaDescarte.length - 1];
+
+            if (validarJogada(cartaParaJogar, cartaTopo, estadoDoJogo.elementoAtual)) {
+                maoHumano.splice(indexNaMao, 1); // Remove da mão
+                estadoDoJogo.pilhaDescarte.push(cartaParaJogar); // Adiciona ao descarte
+                estadoDoJogo.elementoAtual = cartaParaJogar.elemento; // Elemento padrão
+
+                console.log(`Você jogou: ${formatCard(cartaParaJogar)}`);
+                aplicarEfeito(cartaParaJogar, jogadorAtualId);
+
+                if (maoHumano.length === 0) {
+                    estadoDoJogo.vencedor = estadoDoJogo.jogadores[jogadorAtualId].nome;
+                    console.log(`!!! Você v
